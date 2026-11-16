@@ -566,6 +566,13 @@ const inQuietHours = (cfg: Cfg) => {
   return a < b ? cur >= a && cur < b : cur >= a || cur < b;
 };
 
+/** Answered by the owner (not by the judge, not a system supersede) at or after `iso`. */
+const answeredByOwnerSince = (iso: string): boolean =>
+  list(P("decisions", "closed")).some((p) => {
+    const m = readDoc(p).meta;
+    return /^owner/.test(m.answered_by ?? "") && Date.parse(m.answered ?? "") >= Date.parse(iso);
+  });
+
 export function maybeProposeNext(cfg: Cfg, host: string, state: Record<string, string>) {
   if (cfg.idle?.enabled === false || inQuietHours(cfg)) return;
   const busy = ["inbox", "active"].some((f) => list(P("tasks", f), /^T-.*\.md$/)
@@ -580,6 +587,13 @@ export function maybeProposeNext(cfg: Cfg, host: string, state: Record<string, s
     .sort((a, b) => Date.parse(b.created) - Date.parse(a.created))[0];
   const cooldown = (cfg.idle?.cooldown_minutes ?? 180) * 60_000;
   if (pendingMenu && Date.now() - Date.parse(pendingMenu.created) < cooldown) return;
+  // Re-offering only helps an owner who is listening. If he has answered nothing since the last menu was created,
+  // another refresh lands in the same unanswered pile: stop minting menus (each costs a full agent run) and let the
+  // channel get fixed instead. Any real answer — including "忽略" — re-opens the loop.
+  if (pendingMenu && !answeredByOwnerSince(pendingMenu.created)) {
+    journal(host, `💤 fleet idle ${Math.round(idleMin)}m → no new menu: ${pendingMenu.id} still unanswered and the owner has answered nothing since`);
+    return;
+  }
   if (state.last_menu && Date.now() - Date.parse(state.last_menu) < 15 * 60_000) return;
   const id = newTask("Propose next actions (fleet idle)", `The fleet has been idle for ${Math.round(idleMin)} minutes.
 Build the owner's next-action menu per your profile and return needs_decision.${pendingMenu ? `\nAn earlier menu ${pendingMenu.id} is still unanswered — refresh it (drop stale items) rather than repeating it verbatim.` : ""}`,
