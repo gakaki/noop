@@ -1,9 +1,15 @@
-import { expect, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { beforeEach, expect, test } from "bun:test";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { P, recentJournal } from "../src/core";
 
-test("the prompt's recent journal is the latest days, even when agents left other notes in journal/", () => {
+// Every test file shares one temp data dir, and others journal under the current date; a leftover
+// day file would push this fixture's days out of recentJournal()'s last two. Start from a clean journal.
+beforeEach(() => {
+  rmSync(P("journal"), { recursive: true, force: true });
   mkdirSync(P("journal"), { recursive: true });
+});
+
+test("the prompt's recent journal is the latest days, even when agents left other notes in journal/", () => {
   writeFileSync(P("journal", "2026-11-20.md"), "- 10:00 day one\n");
   writeFileSync(P("journal", "2026-11-21.md"), "- 10:00 day two\n");
   // agent-written notes sort after the dated files by name
