@@ -41,3 +41,35 @@ test("the body is plain and short", () => {
   expect(body.startsWith("merge 1 pr y")).toBe(true);
   expect(body.length).toBe(140);
 });
+
+// A hub with no ntfy / Slack / Discord has no way to reach the owner: every message lands only in the timeline,
+// which needs a web login. On the owner's own Mac, show a local banner instead (evidence: 11 days / 0 answers).
+import { bannerScript, bannerWanted } from "../src/notify";
+
+const mac = { platform: "darwin", primary: true, tz: "UTC", now: at("12:00") };
+
+test("the local banner is the last resort, on the owner's own Mac only", () => {
+  expect(bannerWanted(undefined, mac)).toBe(true);
+  expect(bannerWanted({ macos: false }, mac)).toBe(false);
+  expect(bannerWanted({ ntfy_url: "https://ntfy.test/x" }, mac)).toBe(false);
+  expect(bannerWanted({ slack_webhook: "https://hooks.test/x" }, mac)).toBe(false);
+  expect(bannerWanted({ discord_channel: "1", discord_bot_token: "t" }, mac)).toBe(false);
+  expect(bannerWanted(undefined, { ...mac, platform: "linux" })).toBe(false);
+  expect(bannerWanted(undefined, { ...mac, primary: false })).toBe(false);
+});
+
+test("the local banner respects the hub's quiet hours", () => {
+  expect(bannerWanted(undefined, { ...mac, quiet: "22:00-08:00", now: at("23:30") })).toBe(false);
+  expect(bannerWanted(undefined, { ...mac, quiet: "22:00-08:00", now: at("08:30") })).toBe(true);
+});
+
+test("a banner body can never break out into a second AppleScript statement", () => {
+  const s = bannerScript('merge "x"?\n tell application "Finder" to quit \\ hard', "Noop · 需要你拍板");
+  expect(s.startsWith('display notification "')).toBe(true);
+  expect(s.endsWith('" with title "Noop · 需要你拍板"')).toBe(true);
+  expect(s).not.toContain("\n");
+  expect(s.replace(/\\"/g, "").split('"').length - 1).toBe(4); // four delimiters; every inner quote is escaped
+  expect(s).toContain('\\"x\\"?');
+  const long = bannerScript("y".repeat(400));
+  expect(long.length).toBeLessThan(260);
+});

@@ -3,9 +3,35 @@ import { existsSync } from "node:fs";
 import { basename } from "node:path";
 import { type Cfg, P, fileId, hostName, isPrimary, list } from "./core";
 import { appendEvent, type Event, forwardEvent, storeMedia, uploadMedia } from "./server";
+import { inQuiet } from "../app/notify";
 
 export type NotifyOpts = { kind?: Event["kind"]; ref?: string; options?: string[]; attachments?: string[]; from?: string;
   /** Team channel only: no ntfy / Slack / Discord (agents' routine results). */ quiet?: boolean };
+
+/** Any channel that can actually reach the owner outside the hub's own timeline. */
+const hasRemoteChannel = (n: Cfg["notify"]) => !!(n?.ntfy_url || n?.slack_bot_token || n?.slack_channel || n?.slack_webhook
+  || n?.discord_bot_token || n?.discord_channel || n?.discord_webhook);
+
+/** One AppleScript statement that shows a banner. Pure, so it is unit-tested: quotes and backslashes are escaped and
+ * the text is flattened, so a message can never break out into a second AppleScript statement. */
+export function bannerScript(text: string, title = "Noop"): string {
+  const clean = (s: string) => s.replace(/[*`#]/g, "").replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 200)
+    .replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  return `display notification "${clean(text)}" with title "${clean(title)}"`;
+}
+
+/** Should the primary macOS host show a local banner for this message? Only when nothing else can reach the owner:
+ * with no ntfy / Slack / Discord configured, a message lands only in the hub timeline, which needs a web login
+ * (`totp_not_setup` leaves nobody able to log in). Quiet hours and `notify.macos = false` opt out. */
+export function bannerWanted(n: Cfg["notify"], o: { platform?: string; primary: boolean; quiet?: string; tz?: string; now?: Date }): boolean {
+  if ((o.platform ?? process.platform) !== "darwin" || !o.primary) return false;
+  if (n?.macos === false || String(n?.macos) === "false") return false;
+  if (hasRemoteChannel(n)) return false;
+  return !inQuiet(o.quiet, o.tz, o.now ?? new Date());
+}
+
+const BANNER_TITLE: Record<string, string> = { decision: "Noop · 需要你拍板", proposals: "Noop · 新的提议",
+  menu: "Noop · 下一步", login: "Noop · 登录" };
 
 
 async function slackUpload(n: Cfg, file: string, thread?: string) {
@@ -65,6 +91,15 @@ export async function notify(text: string, cfg: Cfg, o: NotifyOpts = {}): Promis
       if (r.id) ids.push(`discord:${r.id}`); else console.error("discord:", r.message);
     } else if (n.discord_webhook) { await post(n.discord_webhook, { content }); ids.push("discord:webhook"); }
   } catch (e) { console.error("discord notify failed", e); }
+  // 3) last resort: no ntfy / Slack / Discord is configured, so the message would sit only in the hub timeline,
+  // which the owner may not be able to open. The primary host is the owner's own machine — show it there.
+  try {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (bannerWanted(n, { primary: isPrimary(cfg), quiet: (cfg.idle as any)?.quiet_hours, tz })) {
+      const r = Bun.spawnSync(["osascript", "-e", bannerScript(text, BANNER_TITLE[o.kind ?? ""] ?? "Noop")]);
+      if (r.exitCode === 0) ids.push("macos"); else console.error("macos notify failed", r.stderr?.toString?.());
+    }
+  } catch (e) { console.error("macos notify failed", e); }
   if (ids.length <= 1) console.log(`[notify]\n${text}`);
   return ids;
 }
