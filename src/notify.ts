@@ -20,10 +20,15 @@ export function bannerScript(text: string, title = "Noop"): string {
   return `display notification "${clean(text)}" with title "${clean(title)}"`;
 }
 
+/** Kinds that need the owner. Routine results ("notice") and housekeeping stay in the hub: a banner for every finished
+ * task would train him to dismiss banners, which is exactly the failure this fallback exists to fix. */
+const BANNER_KINDS = new Set(["decision", "proposals", "menu", "login"]);
+
 /** Should the primary macOS host show a local banner for this message? Only when nothing else can reach the owner:
  * with no ntfy / Slack / Discord configured, a message lands only in the hub timeline, which needs a web login
  * (`totp_not_setup` leaves nobody able to log in). Quiet hours and `notify.macos = false` opt out. */
-export function bannerWanted(n: Cfg["notify"], o: { platform?: string; primary: boolean; quiet?: string; tz?: string; now?: Date }): boolean {
+export function bannerWanted(n: Cfg["notify"], o: { kind?: string; platform?: string; primary: boolean; quiet?: string; tz?: string; now?: Date }): boolean {
+  if (!BANNER_KINDS.has(o.kind ?? "")) return false;
   if ((o.platform ?? process.platform) !== "darwin" || !o.primary) return false;
   if (n?.macos === false || String(n?.macos) === "false") return false;
   if (hasRemoteChannel(n)) return false;
@@ -95,7 +100,7 @@ export async function notify(text: string, cfg: Cfg, o: NotifyOpts = {}): Promis
   // which the owner may not be able to open. The primary host is the owner's own machine — show it there.
   try {
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    if (bannerWanted(n, { primary: isPrimary(cfg), quiet: (cfg.idle as any)?.quiet_hours, tz })) {
+    if (bannerWanted(n, { kind: o.kind, primary: isPrimary(cfg), quiet: (cfg.idle as any)?.quiet_hours, tz })) {
       const r = Bun.spawnSync(["osascript", "-e", bannerScript(text, BANNER_TITLE[o.kind ?? ""] ?? "Noop")]);
       if (r.exitCode === 0) ids.push("macos"); else console.error("macos notify failed", r.stderr?.toString?.());
     }

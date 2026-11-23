@@ -46,7 +46,7 @@ test("the body is plain and short", () => {
 // which needs a web login. On the owner's own Mac, show a local banner instead (evidence: 11 days / 0 answers).
 import { bannerScript, bannerWanted } from "../src/notify";
 
-const mac = { platform: "darwin", primary: true, tz: "UTC", now: at("12:00") };
+const mac = { kind: "decision", platform: "darwin", primary: true, tz: "UTC", now: at("12:00") };
 
 test("the local banner is the last resort, on the owner's own Mac only", () => {
   expect(bannerWanted(undefined, mac)).toBe(true);
@@ -56,6 +56,13 @@ test("the local banner is the last resort, on the owner's own Mac only", () => {
   expect(bannerWanted({ discord_channel: "1", discord_bot_token: "t" }, mac)).toBe(false);
   expect(bannerWanted(undefined, { ...mac, platform: "linux" })).toBe(false);
   expect(bannerWanted(undefined, { ...mac, primary: false })).toBe(false);
+});
+
+test("only the kinds that need the owner banner; routine results and housekeeping never do", () => {
+  for (const kind of ["notice", "system", "owner", "", undefined])
+    expect(bannerWanted(undefined, { ...mac, kind: kind as any })).toBe(false);
+  for (const kind of ["decision", "proposals", "menu", "login"])
+    expect(bannerWanted(undefined, { ...mac, kind })).toBe(true);
 });
 
 test("the local banner respects the hub's quiet hours", () => {
